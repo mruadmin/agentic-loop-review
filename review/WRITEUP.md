@@ -9,32 +9,73 @@ course — including one divergence we are not confident about.
 
 ---
 
-## What we are asking you
+## What we got wrong, and what is still open
 
-Four questions. Everything after this section is the evidence behind them.
+Ray sent us his own `task-lifecycle` skill after reading a first draft of this. It answered our three
+biggest questions immediately, so they are recorded here as **diagnosis rather than questions** — and
+the diagnosis is not flattering to us.
 
-1. **Does the L3 lifecycle have a mechanism to size its process to the change?**
-   We could not find one, and this turned out to be the whole problem. Our L3 runs the full pipeline
-   on a three-line import fix and on a schema migration alike.
+### The mistake: we inverted the core loop
 
-2. **Is the multi-angle review meant to run per-step, or once per plan?**
-   We ran four persona lenses on every step's diff, on every attempt. On one run that was 26 of 48
-   sub-agents. We have since moved the lenses to the plan and kept only correctness, reuse and an
-   outside model on the diff — but we are guessing at your intent.
+His design builds **the whole change in one builder**, then reviews **once, on the complete PR diff**,
+capped at two rounds. Ours decomposes into atomic steps and reviews **every step's diff, on every
+attempt**. That single choice produces everything measured below: step count × attempt count ×
+reviewers is where 26 of our 48 agents went.
 
-3. **Is there a pattern for sharing context across sub-agents?**
-   Our newest measurement says **99.4% of token spend is cached-prefix re-supply, not generation.**
-   Every fresh-context sub-agent re-reads a 24–43k prefix on every turn of its tool loop. Fresh
-   context is the *point* of the design, so we assume this is a known cost with a known mitigation
-   we have missed.
+Counting his worst case for a whole feature — explorers, one builder, two review rounds of three,
+two fixers, verify — comes to roughly **16 agents**. We spent **48 on a three-line import fix**.
 
-4. **How do you run sub-agents unattended without permission prompts?**
-   An unattended worker cannot stop for an ask-tier prompt, so ours spawn with `bypassPermissions`.
-   Anthropic's own guidance says never to do this. We think we are wrong here and have not fixed it.
+We did not adapt his design; we mis-transcribed it, and then measured the result instead of the
+intent.
 
-**What we are not asking:** whether the course works. The L3/L4 skeleton is the reason we have a
-queue, a blast-radius gate and a review-bot fix loop at all. We are asking where our *adaptation*
-went wrong, because we changed a lot and only measured afterwards.
+### The three things we thought were gaps, and were not
+
+- **Sizing the process to the change.** We could not find the mechanism. It is there and it is
+  explicit: scale the explore fan-out to the ask (or skip exploring entirely when the files are
+  already named), choose review depth from a *measured* diff rather than from the words in the spec,
+  stop the moment a review comes back clean, and cap the rounds. We had independently arrived at the
+  diff-measured review tier (commit `5747214`) — we simply never applied the same thinking to the
+  pipeline itself, only to the tier inside it.
+- **Sharing context across sub-agents.** Our measurement said 99.4% of token spend is cached-prefix
+  re-supply. The answer is not a caching feature: sub-agents are supposed to return **maps — paths,
+  symbols, patterns — not file contents**, and the orchestrator holds a small synthesised brief rather
+  than the material behind it. Nothing large is ever in its hands to re-supply. Our 24–43k prefixes
+  are a consequence of handing every agent a fat context block.
+- **Running unattended without permission prompts.** Answered by his environment rather than by a
+  flag: the loop runs in a hosted headless sandbox, cloned per run. Permissions are not bypassed — the
+  *blast radius* is. That is strictly better than our answer, which is `bypassPermissions` on a machine
+  holding live credentials.
+
+### What is still genuinely open
+
+1. **If nothing merges without a human, how does a queue worker make progress overnight?** His rule is
+   absolute — merging is the user's call. We added a blast-radius gate that auto-merges small changes.
+   Given our track record that looks like the wrong bet, but it is the difference between a loop that
+   drains a backlog unattended and one that needs a human every cycle.
+2. **Does it matter that our second opinion arrives after the PR rather than beside the build?** We
+   substituted a PR review bot for a second-model review. We take the point that two *different*
+   mandates finding the same defect is stronger evidence than one mandate run twice — the asymmetry is
+   the value — but ours is also later in the loop.
+3. **What happens when the task needs local credentials or a private network,** and the sandbox answer
+   to the permissions question is unavailable?
+4. **Is the L4 queue meant to have durable state at all,** or is git-plus-the-thread deliberately the
+   whole database? Ours has `specs/pending|active|waiting` folders and a per-spec state directory,
+   which may be a database we did not need.
+5. **Was a deterministic turn-end gate considered and rejected?** The verify discipline in his skill is
+   strong prose — real DB confirmation, and an honest "couldn't verify" beats a claimed pass. Ours is a
+   `Stop` hook that refuses to end the turn while any requirement lacks a passing test. Prose is more
+   flexible; a hook cannot be talked out of it.
+
+### One thing we owe him back
+
+His skill is emphatic that `background: false` is mandatory on every dispatch, because backgrounded
+agents notify a parent that a one-shot turn will never be around to hear — and that *parallel* and
+*backgrounded* are not the same thing.
+
+We measured **9 of 48 agents returning empty results** and built a six-minute watchdog to abandon
+silent agents. If any part of that is the same dispatch mismatch rather than genuine hangs, then our
+watchdog is treating a dispatch bug as a performance problem — and that is worth checking before
+tuning it further. It is on our list.
 
 ---
 

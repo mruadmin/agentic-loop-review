@@ -7,8 +7,15 @@ agent**. This repo is the actual scaffolding — skills, sub-agent definitions, 
 four hooks, and the tests that hold them in place — so the critique can be about real code rather
 than a description of it.
 
-**Start here: [`review/WRITEUP.md`](review/WRITEUP.md)** — the narrative, the numbers, and the
-four questions we would most like answered. Everything below is the supporting material.
+**Start here: [`review/WRITEUP.md`](review/WRITEUP.md)** — the numbers, what we got wrong, and
+what is still open. Everything below is the supporting material.
+
+> **Updated after Ray's reply.** He sent his own `task-lifecycle` skill, which answered our three
+> biggest questions outright. The short version: his loop builds the whole change in **one**
+> builder and reviews **once** on the complete PR diff, capped at two rounds. Ours decomposes
+> into atomic steps and reviews every step's diff on every attempt — which is exactly where 26
+> of our 48 agents went. We did not adapt his design so much as mis-transcribe it. The write-up
+> now records that as diagnosis rather than as an open question.
 
 ## The result that prompted this
 
@@ -94,9 +101,11 @@ backstop, per-step model matching, and GUI/design gates. Adopted from the course
 multi-angle review, the user-flow loop, the blast-radius merge gate, post-merge monitoring, and the
 L4 worker.
 
-The divergence we are **least** confident about: sub-agents spawn with `bypassPermissions`, because
-an unattended worker cannot stop for an ask-tier prompt. Anthropic's own guidance says never to do
-this. We think we are wrong here and have not fixed it.
+The divergence we were least confident about — sub-agents spawning with `bypassPermissions`, because
+an unattended worker cannot stop for an ask-tier prompt — now has an answer we did not have when this
+was written: run the loop in a hosted headless sandbox, so permissions are never bypassed and the
+blast radius is the sandbox instead. Ours runs on a machine holding live credentials. Not yet fixed,
+but no longer unexplained.
 
 ## Scope: this is the harness, not the application
 
