@@ -1,0 +1,65 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /path/to/repo/scripts/pretooluse_guard.py"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /path/to/repo/scripts/posttooluse_smoke.py"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /path/to/repo/harness/autoseed.py"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /path/to/repo/harness/done_gate.py"
+          }
+        ]
+      }
+    ]
+  },
+  "plansDirectory": ".claude/plans",
+  "permissions": {
+    "deny": [
+      "Read(.env)",
+      "Edit(.env)",
+      "Read(.env.*)",
+      "Edit(.env.*)",
+      "Read(secrets/**)",
+      "Edit(secrets/**)",
+      "Read(/reports/golden_witness.json)",
+      "Edit(/reports/golden_witness.json)",
+      "Read(/reports/model_c.pt)",
+      "Edit(/reports/model_c.pt)",
+      "Read(/runs/model_a/**)",
+      "Edit(/runs/model_a/**)",
+      "Read(/runs/model_b/**)",
+      "Edit(/runs/model_b/**)"
+    ]
+  }
+}

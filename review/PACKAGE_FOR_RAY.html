@@ -1,0 +1,507 @@
+<title>Three attempts at an autonomous coding loop — a review package</title>
+
+<style>
+  :root {
+    --ground: #FBFBFC;
+    --raised: #F2F3F4;
+    --ink: #151A21;
+    --ink-soft: #4B5560;
+    --ink-faint: #7C8792;
+    --rule: #DDE1E4;
+    --accent: #1F6F6B;
+    --accent-soft: #E4EFEE;
+    --fail: #A93226;
+    --pass: #2E7D52;
+    --warn: #8A6014;
+    --measure: 66ch;
+    --wide: 96ch;
+    --serif: Charter, "Bitstream Charter", "Sitka Text", Cambria, Georgia, serif;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ground: #101416; --raised: #171D20; --ink: #E3E8E7; --ink-soft: #A3AEB0;
+      --ink-faint: #7B8688; --rule: #262E31; --accent: #5CBDB5; --accent-soft: #172A29;
+      --fail: #E8776A; --pass: #6DC291; --warn: #D6A44C;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #101416; --raised: #171D20; --ink: #E3E8E7; --ink-soft: #A3AEB0;
+    --ink-faint: #7B8688; --rule: #262E31; --accent: #5CBDB5; --accent-soft: #172A29;
+    --fail: #E8776A; --pass: #6DC291; --warn: #D6A44C;
+  }
+  :root[data-theme="light"] {
+    --ground: #FBFBFC; --raised: #F2F3F4; --ink: #151A21; --ink-soft: #4B5560;
+    --ink-faint: #7C8792; --rule: #DDE1E4; --accent: #1F6F6B; --accent-soft: #E4EFEE;
+    --fail: #A93226; --pass: #2E7D52; --warn: #8A6014;
+  }
+
+  body {
+    background: var(--ground); color: var(--ink);
+    font-family: var(--serif); font-size: 17px; line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: var(--wide); margin: 0 auto; padding: 4rem 1.5rem 6rem; }
+  .col { max-width: var(--measure); }
+
+  h1, h2, h3 { text-wrap: balance; line-height: 1.2; font-weight: 600; }
+  h1 { font-size: 2.4rem; letter-spacing: -0.015em; margin: 0 0 .6rem; }
+  h2 {
+    font-size: 1.45rem; margin: 3.6rem 0 1rem;
+    padding-top: 1.4rem; border-top: 1px solid var(--rule);
+  }
+  h3 { font-size: 1.08rem; margin: 2rem 0 .5rem; }
+  p, ul, ol { margin: 0 0 1.05rem; }
+  ul, ol { padding-left: 1.3rem; }
+  li { margin-bottom: .4rem; }
+  a { color: var(--accent); }
+
+  .eyebrow {
+    font-family: var(--mono); font-size: .68rem; letter-spacing: .16em;
+    text-transform: uppercase; color: var(--ink-faint); margin: 0 0 .5rem;
+  }
+  .standfirst { font-size: 1.14rem; color: var(--ink-soft); max-width: var(--measure); }
+  .meta {
+    font-family: var(--mono); font-size: .75rem; color: var(--ink-faint);
+    margin-top: 1.6rem; padding-top: .9rem; border-top: 1px solid var(--rule);
+    max-width: var(--measure);
+  }
+
+  /* Attempt markers: the sequence is real, so it gets numbered */
+  .attempt { display: flex; gap: 1.1rem; align-items: baseline; margin: 3.6rem 0 1rem;
+             padding-top: 1.4rem; border-top: 1px solid var(--rule); }
+  .attempt .n {
+    font-family: var(--mono); font-size: .8rem; font-weight: 600; color: var(--accent);
+    border: 1px solid var(--accent); border-radius: 2px; padding: .12rem .42rem;
+    flex: 0 0 auto; letter-spacing: .04em;
+  }
+  .attempt h2 { margin: 0; padding: 0; border: 0; }
+  .attempt .when { font-family: var(--mono); font-size: .72rem; color: var(--ink-faint); }
+
+  .tw { overflow-x: auto; margin: 1.4rem 0 1.8rem; }
+  table { border-collapse: collapse; font-size: .88rem; min-width: 100%; }
+  th, td { text-align: left; padding: .5rem .8rem; border-bottom: 1px solid var(--rule);
+           vertical-align: top; }
+  th { font-family: var(--mono); font-size: .68rem; letter-spacing: .1em;
+       text-transform: uppercase; color: var(--ink-faint); font-weight: 500;
+       border-bottom: 1px solid var(--ink-faint); white-space: nowrap; }
+  td.num { font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  tr.win td { background: var(--accent-soft); }
+  .f { color: var(--fail); font-weight: 600; }
+  .p { color: var(--pass); font-weight: 600; }
+  .w { color: var(--warn); font-weight: 600; }
+
+  code { font-family: var(--mono); font-size: .86em; background: var(--raised);
+         padding: .08em .3em; border-radius: 2px; }
+  pre { font-family: var(--mono); font-size: .8rem; line-height: 1.5; background: var(--raised);
+        padding: .9rem 1.1rem; border-radius: 3px; overflow-x: auto;
+        border-left: 2px solid var(--rule); }
+  pre code { background: none; padding: 0; }
+
+  .pull {
+    border-left: 2px solid var(--accent); padding: .1rem 0 .1rem 1.1rem;
+    margin: 1.6rem 0; color: var(--ink-soft); font-size: 1.05rem;
+  }
+  .pull strong { color: var(--ink); }
+
+  .note {
+    background: var(--raised); border-radius: 3px; padding: 1rem 1.2rem; margin: 1.6rem 0;
+    font-size: .92rem;
+  }
+  .note .lab { font-family: var(--mono); font-size: .66rem; letter-spacing: .13em;
+               text-transform: uppercase; color: var(--ink-faint); display: block;
+               margin-bottom: .35rem; }
+
+  .q { counter-reset: none; margin: 1.4rem 0; }
+  .q li { margin-bottom: 1rem; }
+  .q li > strong { display: block; }
+  .q li > span { color: var(--ink-soft); font-size: .95rem; }
+
+  pre.mermaid { background: none; border: 0; padding: 0; text-align: center; }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+</style>
+
+<div class="wrap">
+
+<p class="eyebrow">Review package · prepared for Ray · Loopy AI / Agentic Coding School</p>
+<h1>Three attempts at a loop that codes without us</h1>
+<p class="standfirst">
+  We built your L3/L4 design, measured it against a control, and it lost badly to a single agent.
+  This is what we tried, what the instruments said, and where we have knowingly walked away from
+  the course — including one divergence we are not confident about.
+</p>
+
+<p class="meta">
+  Author: Michael + Claude Opus 5 · 2026-07-26 · Harness under review runs against a private production codebase (~1,800 tests); none of
+  that codebase is in the package · All numbers below come from run transcripts, not
+  from recollection.
+</p>
+
+<h2>What we are asking you</h2>
+
+<p class="col">Four questions. Everything after this section is the evidence behind them.</p>
+
+<ol class="q col">
+  <li>
+    <strong>Does the L3 lifecycle have a mechanism to size its process to the change?</strong>
+    <span>We could not find one, and this turned out to be the whole problem. Our L3 runs the full
+    pipeline on a three-line import fix and on a schema migration alike.</span>
+  </li>
+  <li>
+    <strong>Is the multi-angle review meant to run per-step, or once per plan?</strong>
+    <span>We ran four persona lenses on every step's diff, on every attempt. On one run that was
+    26 of 48 sub-agents. We have since moved the lenses to the plan and kept only correctness,
+    reuse and an outside model on the diff — but we are guessing at your intent.</span>
+  </li>
+  <li>
+    <strong>Is there a pattern for sharing context across sub-agents?</strong>
+    <span>Our newest measurement says 99.4% of token spend is cached-prefix re-supply, not
+    generation. Every fresh-context sub-agent re-reads a 24–43k prefix on every turn of its tool
+    loop. Fresh context is the point of the design, so we assume this is a known cost with a known
+    mitigation we have missed.</span>
+  </li>
+  <li>
+    <strong>How do you run sub-agents without permission prompts?</strong>
+    <span>An unattended worker cannot stop for an ask-tier prompt, so ours spawn with
+    <code>bypassPermissions</code>. Anthropic's own guidance says never to do this. We think we
+    are wrong here and have not fixed it. See the last section.</span>
+  </li>
+</ol>
+
+<div class="note col">
+  <span class="lab">What we are not asking</span>
+  We are not asking whether the course works — the L3/L4 skeleton is the reason we have a queue,
+  a blast-radius gate and a Greptile fix-loop at all. We are asking where our adaptation of it
+  went wrong, because we changed a lot and only measured afterwards.
+</div>
+
+<div class="attempt">
+  <span class="n">01</span>
+  <div>
+    <h2>Our own orchestrator</h2>
+    <p class="when">before 2026-07-25 · retired</p>
+  </div>
+</div>
+
+<p class="col">
+  A single <code>/orchestrator</code> skill. Ad-hoc intake from arguments, one planner sub-agent
+  producing steps that each carried an exit-0 <code>verify</code> command, one adversarial reviewer,
+  and a deterministic <code>Stop</code> hook that refused to let a turn end while any contract
+  requirement lacked a passing test.
+</p>
+
+<h3>Why we moved off it</h3>
+<ul class="col">
+  <li><strong>No queue.</strong> Every task needed Michael to start it. There was no way to leave
+    work running overnight.</li>
+  <li><strong>One reviewer.</strong> A single adversarial pass missed whole classes of defect —
+    most notably reuse: five reviewers hunting bugs are all blind to "this hand-rolls something
+    the repo already provides."</li>
+  <li><strong>Nothing after the PR.</strong> No review-bot loop, no merge gate, no post-merge
+    monitoring. The loop stopped exactly where the risk starts.</li>
+  <li><strong>No user-flow verification.</strong> A screenshot rule, not a loop.</li>
+</ul>
+
+<p class="col">
+  Everything in that list is something your L3/L4 design already had, which is why we adopted it
+  rather than patching ours.
+</p>
+
+<div class="attempt">
+  <span class="n">02</span>
+  <div>
+    <h2>Your L3/L4 skeleton, with our floors grafted in</h2>
+    <p class="when">2026-07-25 · <code>/lifecycle</code> + <code>/spec-queue</code></p>
+  </div>
+</div>
+
+<p class="col">
+  We wrote an explicit adopt-versus-keep decision for every aspect before building, so the
+  divergences below are deliberate rather than drift. Abbreviated from that document:
+</p>
+
+<div class="tw">
+<table>
+  <thead>
+    <tr><th>Aspect</th><th>Ours (attempt 1)</th><th>Course L3/L4</th><th>Decision</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Intake</td><td>ad-hoc arguments</td><td>interview → spec file → queue folder</td><td class="p">Course</td></tr>
+    <tr><td>Review</td><td>one adversarial reviewer</td><td>multi-angle + per-finding verify agents</td><td class="p">Course</td></tr>
+    <tr><td>Second model</td><td>none</td><td>Codex alongside</td><td class="w">Adapted — Greptile on the MR is our second voice</td></tr>
+    <tr><td>User-flow verify</td><td>screenshot rule</td><td>dedicated L2 loop, GIF per flow</td><td class="p">Course</td></tr>
+    <tr><td>Merge gate</td><td>human always</td><td>blast-radius agent, small→auto</td><td class="w">Course + hardened: sacred paths always human</td></tr>
+    <tr><td>Post-merge</td><td>none</td><td>monitor logs 1h → hotfix loop</td><td class="p">Course</td></tr>
+    <tr><td>Queueing</td><td>none</td><td>L4 worker drains queue</td><td class="p">Course</td></tr>
+    <tr><td>Tools-first research gate</td><td>mandatory phase</td><td>absent</td><td class="f">Kept ours</td></tr>
+    <tr><td>Done discipline</td><td>exit-0 per step + Stop-hook backstop</td><td>agent judgement</td><td class="f">Kept ours</td></tr>
+    <tr><td>Model matching per step</td><td>haiku/sonnet/opus</td><td>not addressed</td><td class="f">Kept ours</td></tr>
+    <tr><td>GUI / design gates</td><td>design tokens + live screenshot</td><td>not addressed</td><td class="f">Kept ours, strengthened</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p class="col">
+  The one we would defend hardest is <strong>done discipline</strong>. This project exists because
+  work kept getting reported finished when it wasn't, so "done" is an exit code here, never a claim,
+  and a <code>Stop</code> hook enforces it deterministically at turn-end. Agent judgement was the
+  thing that failed us.
+</p>
+
+<pre class="mermaid">
+flowchart LR
+  Q[specs/pending] --> L[L4 worker]
+  L --> P[L3 lifecycle: one spec]
+  P --> PL[plan] --> B[build per step] --> R[review] --> V[verify] --> PR[open MR]
+  PR --> G[Greptile loop] --> BR{blast radius}
+  BR -->|small| M[auto-merge] --> MON[monitor 1h]
+  BR -->|large| H[human]
+  V -->|fails 3x| S[stuck/]
+</pre>
+
+<div class="attempt">
+  <span class="n">03</span>
+  <div>
+    <h2>The day we finally measured it</h2>
+    <p class="when">2026-07-26 · the control beat the loop</p>
+  </div>
+</div>
+
+<p class="col">
+  We gave the same trivial bug to four configurations: a Python CLI that crashed with an
+  <code>ImportError</code> when run as a script. The fix is three lines. Each ran in its own git
+  worktree, on Opus, from the same spec.
+</p>
+
+<div class="tw">
+<table>
+  <thead>
+    <tr><th>Arm</th><th>Sub-agents</th><th>Output tokens</th><th>Wall clock</th><th>Outcome</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>L3 <code>lifecycle-run</code>, baseline</td><td class="num">54</td><td class="num">342k</td><td class="num">79.3 min</td><td class="f">STUCK</td></tr>
+    <tr><td>L3 <code>lifecycle-fix</code>, small-bug variant</td><td class="num">10</td><td class="num">83k</td><td class="num">46.8 min</td><td class="f">STUCK</td></tr>
+    <tr><td>L3 + caps, watchdog, cheap-probe, preflight</td><td class="num">48</td><td class="num">237k</td><td class="num">67.5 min</td><td class="f">ceiling hit — zero product code</td></tr>
+    <tr class="win"><td>One agent, told to choose its own process</td><td class="num">1</td><td class="num">8k</td><td class="num">20 min</td><td class="p">working fix</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>Where the 48 agents went</h3>
+
+<p class="col">Roles inferred from each agent's own opening prompt:</p>
+
+<div class="tw">
+<table>
+  <thead><tr><th>Role</th><th>Agents</th><th>Share</th></tr></thead>
+  <tbody>
+    <tr><td>review</td><td class="num">26</td><td class="num">54%</td></tr>
+    <tr><td>plan</td><td class="num">14</td><td class="num">29%</td></tr>
+    <tr><td>implement <em>— the only ones that change code</em></td><td class="num">5</td><td class="num">10%</td></tr>
+    <tr><td>verify</td><td class="num">2</td><td class="num">4%</td></tr>
+    <tr><td>preflight</td><td class="num">1</td><td class="num">2%</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="pull col">
+  <strong>83% of the fleet deliberated. 10% built.</strong> On a three-line import fix. Several
+  review agents re-read a 24–43k prefix in order to emit 300 tokens.
+</div>
+
+<h3>Two other instrument readings that surprised us</h3>
+
+<p class="col">
+  <strong>Time and cost point in opposite directions.</strong> We had been quoting the first of
+  these as if it explained the second:
+</p>
+
+<div class="tw">
+<table>
+  <thead><tr><th>Bottleneck</th><th>Measurement</th><th>Implied lever</th></tr></thead>
+  <tbody>
+    <tr><td>wall clock</td><td class="num">87.5% model generation / 12.1% tool exec</td><td>concurrency, fewer serial stages</td></tr>
+    <tr><td>token cost</td><td class="num">99.4% context re-supply / 0.6% generation</td><td>smaller prefix, fewer turns per agent</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p class="col">
+  Cost decomposes as <code>agents × turns-per-agent × prefix-size</code> — measured at
+  <code>40 × 21.3 × 46,880</code>. We had built a sub-agent cap, which attacks only the first and
+  weakest multiplier. Cache read accrues per API call, so every turn of an agent's tool loop
+  re-reads its whole prefix.
+</p>
+
+<p class="col">
+  <strong>Concurrency was idling at 1.67×</strong>, and one baseline run lost
+  <strong>27.7% of its wall clock — 40.4 agent-minutes across 52 gaps</strong> — to agents that
+  produced nothing and then finished the same work in minutes on respawn.
+</p>
+
+<div class="note col">
+  <span class="lab">The finding that embarrassed us most</span>
+  While measuring, we discovered <strong>554 tests had silently not been running</strong>. Three
+  files in the test directory were one-shot scripts whose module-level code called
+  <code>sys.exit(1)</code>; pytest imports every file during collection, so any one of them aborted
+  collection for the entire directory with <code>INTERNALERROR — no tests ran</code>. It read as an
+  infrastructure problem rather than a testing gap. That is a false green sitting inside the very
+  mechanism built to prevent false greens, and nothing in the loop noticed for an unknown period.
+</div>
+
+<h2>What we changed, and what we concluded</h2>
+
+<p class="col">
+  We first assumed the problem was <em>spend</em>, and built four levers accordingly. They worked:
+  agents 54 → 40, output 342k → 237k, wall clock 79 → 52 min. The run still finished with
+  <strong>zero product-code changes</strong>.
+</p>
+
+<ul class="col">
+  <li><strong>A hard sub-agent ceiling.</strong> There had been none of any kind; an earlier run
+    reached 77 agents in 1h42m.</li>
+  <li><strong>A watchdog on silent agents.</strong> Six-minute bell, one respawn, longer leash on
+    the retry.</li>
+  <li><strong>A cheap probe before expensive review.</strong> Run the step's own verify command
+    first and only fan out reviewers if it passes. "A thermometer, not a doctor."</li>
+  <li><strong>A spec preflight.</strong> Specs now carry executable claims; a spec whose factual
+    claim is false refuses to dispatch. This came from a run that spent 79 minutes failing to
+    satisfy a spec sentence that was simply wrong.</li>
+  <li><strong>A ceiling that degrades instead of detonating.</strong> Our first cap <em>threw</em>,
+    which discarded the finished plan, five implementer attempts and 26 completed reviews. It now
+    emits what it learned on the way out.</li>
+</ul>
+
+<p class="col">
+  Then we read the winning arm's prompt again, and the conclusion changed. It is <strong>3,814
+  characters</strong> — longer and more carefully written than we remembered. It is not "less
+  scaffolding."
+</p>
+
+<pre><code>## How to work — this part is yours to decide
+
+You choose your own process. You may do it all yourself, or spawn
+sub-agents for whatever you judge worth delegating. **Size the process
+to the actual change.** A one-line fix does not need a research phase,
+a plan review, or four reviewers; a subtle one might need more than
+you'd guess. Deciding that proportion well is the point.</code></pre>
+
+<p class="col">
+  Every one of its six non-negotiables is about <em>evidence</em>, never about process: red before
+  green; root cause in one sentence with <code>file:line</code>; done is an exit code; verify
+  independently of the fix; smallest diff that fully fixes the cause; report out-of-scope findings
+  rather than fixing them.
+</p>
+
+<div class="pull col">
+  <strong>Constrain the goal and the evidence. Delegate the process.</strong> Our L3 does the
+  opposite — its phase list is hard-coded and it has no way to decide a small change doesn't need
+  all of it.
+</div>
+
+<h2>Where we are now</h2>
+
+<p class="col">
+  A third loop, <code>/solve</code>, sits alongside <code>/lifecycle</code> rather than replacing
+  it. One lead agent picks its own process; verification moved from the spec's literal clauses to a
+  <strong>sealed statement of intent</strong>.
+</p>
+
+<pre class="mermaid">
+flowchart TD
+  A[spec] --> B[preflight the spec's factual claims]
+  B -->|claim false| X[STOP: fix the spec, do not dispatch]
+  B -->|claims hold| C[write INTENT.md and SEAL it]
+  C --> D[ONE lead agent, own worktree,<br/>chooses its own process]
+  D --> E[verify against the SEALED intent]
+  E -->|clause fails| F[report the clause + its output] --> D
+  E -->|all pass| G[DONE]
+</pre>
+
+<p class="col">
+  The reasoning for intent over spec-clauses: real implementers routinely find the spec was written
+  with less information than they end up having. A spec clause that is itself the defect currently
+  makes our loop fail rather than say so.
+</p>
+
+<p class="col">
+  But "verify the intent" is also the perfect cover for finishing something easier and declaring
+  <em>that</em> the goal — which is the exact overclaiming this project exists to stop. So intent
+  verification is made <em>harder</em> to fudge than spec verification, by four rules a tool
+  enforces rather than a prompt requests:
+</p>
+
+<ul class="col">
+  <li><strong>Sealed before the work.</strong> The intent is hashed up front. Editing it afterwards
+    is exit code 4, not a pass. You cannot move the target after taking the shot.</li>
+  <li><strong>Every clause binds a command</strong>, or states explicitly why none can. Bound to
+    neither, sealing is refused — silence never reads as a pass.</li>
+  <li><strong>Judgement clauses cannot self-certify.</strong> The <code>certified_by</code> field
+    must be empty at seal time; it is the only field the seal tolerates being edited later, and it
+    is filled by a reviewer that never saw the implementation.</li>
+  <li><strong>Divergence is declared, not discovered.</strong> A clause may depart from the spec,
+    but must record what the spec said and why this is better. An undeclared departure is scope
+    drift wearing an improvement's clothes.</li>
+</ul>
+
+<p class="col">
+  We also kept an explicit carve-out: load-bearing changes to the engine keep the full review
+  fan-out. The 83/10 deliberation ratio is waste on an import fix and cheap insurance on a metric
+  that must never regress. Knowing which is which is the judgement the whole design now rests on.
+</p>
+
+<h2>Divergences we are least confident about</h2>
+
+<p class="col">In rough order of how much we would like to be corrected.</p>
+
+<ol class="q col">
+  <li>
+    <strong>Sub-agents spawn with <code>bypassPermissions</code>.</strong>
+    <span>Anthropic's guidance says never to skip permissions. An unattended L4 worker cannot stop
+    for an ask-tier prompt, so we did it anyway, on a standing pre-approval. Hard hook denials still
+    apply and a PreToolUse guard blocks secrets and destructive commands. We suspect there is a
+    correct pattern here that we have simply not found, and we have been sitting on this rather than
+    resolving it.</span>
+  </li>
+  <li>
+    <strong>We replaced four per-diff persona lenses with three.</strong>
+    <span>Correctness, reuse, and an outside model. The persona rationale is context focus, and we
+    reasoned that is spent once on the plan rather than per diff — a step's diff being small enough
+    for one reviewer to hold entirely. This may simply be us weakening review to save agents.</span>
+  </li>
+  <li>
+    <strong>Plan review is gated to plans of three or more steps.</strong>
+    <span>Your own scope note says the plan-review pattern is not for tiny changes where hook
+    overhead dominates, so we think this one is in the spirit of the course — but it is the change
+    we made with the least evidence.</span>
+  </li>
+  <li>
+    <strong>Greptile stands in for a second-model review.</strong>
+    <span>We do not run Codex. Greptile reviews the merge request, which means our independent
+    second opinion arrives after the PR is open rather than beside the build. We do not know if
+    that ordering costs us anything.</span>
+  </li>
+</ol>
+
+<h2>How we are keeping ourselves honest from here</h2>
+
+<p class="col">
+  Every claim above is now a registered hypothesis with a written falsifier, in a separate repo, so
+  that a belief cannot quietly become an assumption. Fourteen are open. The measurement harness
+  computes agent counts and token spend from run transcripts rather than accepting typed numbers,
+  because we got two of today's figures wrong by reading a mid-run snapshot and a working tree
+  instead of a passing verify.
+</p>
+
+<p class="col">
+  The one thing we will not do again is tune before measuring. We spent a day building levers for a
+  problem — spend — that turned out not to be the one making the loop fail.
+</p>
+
+<p class="meta">
+  Happy to share any run transcript, the four arm prompts, or the intent-contract source. The
+  engine code itself stays private, but none of the loop scaffolding does.
+</p>
+
+</div>
