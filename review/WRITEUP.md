@@ -144,12 +144,30 @@ flowchart LR
 Same trivial bug to four configurations: a Python CLI that crashed with `ImportError` when run as a
 script. The fix is three lines. Each ran in its own git worktree, on Opus, from the same spec.
 
-| Arm | Sub-agents | Output tokens | Wall clock | Outcome |
-|---|---|---|---|---|
-| L3 `lifecycle-run`, baseline | 54 | 342k | 79.3 min | **STUCK** |
-| L3 `lifecycle-fix`, small-bug variant | 10 | 83k | 46.8 min | **STUCK** |
-| L3 + caps, watchdog, cheap-probe, preflight | 48 | 237k | 67.5 min | **ceiling hit — zero product code** |
-| **One agent, told to choose its own process** | **1** | **8k** | **20 min** | **working fix** |
+| Arm | Agents | Output | Wall clock | Fix produced? | What the loop *reported* |
+|---|---|---|---|---|---|
+| L3 `lifecycle-run` | 54 | 342k | 79.3 min | **yes — committed, test passes** | STUCK |
+| L3 `lifecycle-fix` | 10 | 83k | 46.8 min | yes, but **never committed**, and it edited a file the spec explicitly forbade | STUCK |
+| L3 + caps/watchdog/probe/preflight | 48 | 237k | 67.5 min | **yes — committed, test passes** | ceiling hit, no verdict |
+| **One agent, chose its own process** | **1** | **8k** | **20 min** | **yes — committed, test passes** | **success, accurately** |
+
+### Correction, and it changes the finding
+
+An earlier version of this page said the loop arms produced no working code. That was wrong. We
+verified each worktree with `git diff` — working tree versus HEAD — which by construction cannot show
+work that was **committed**. Checked properly against the base branch, three of the four arms had a
+one-line fix and a passing test sitting on a branch.
+
+**All three loop arms solved the bug. None of them could tell us they had.** The 54-agent run
+committed a working fix and reported STUCK. The 48-agent run committed a working fix, then blew its
+agent ceiling during the *review* fan-out and threw the verdict away with the exception. The 10-agent
+run fixed it in the working tree, never committed, and also modified a file the spec named as
+off-limits.
+
+So the defect is in **recognising and reporting completion**, not in producing it — which is a
+different and more interesting problem than the one we set out to ask about. The efficiency gap is
+unchanged and still stark: 48 agents and 68 minutes against 1 agent and 20 minutes, same one-line
+change. And the single agent was the only one whose report matched reality.
 
 ### Where the 48 agents went
 
@@ -196,11 +214,72 @@ the loop noticed for an unknown period. Guard: `harness/tests/test_tests_are_col
 
 ---
 
+## The root cause, found after publishing: verify was testing the wrong checkout
+
+The correction above raised a better question than the original one. If all three loop arms produced a
+working fix, why did every one of them report failure? The answer is one line of shell per step, and
+it is worth more than any of the cost numbers.
+
+`lifecycle-run.js` creates a git worktree per run and threads it through as `S.repo_path`. The probe
+that runs a step's verify command is told, literally, *"Run EXACTLY this command in
+${S.repo_path}"*. But the **planner** prompt never mentioned `repo_path` at all — the only absolute
+path in its context came from `${ROOT}/STATE.md`, the main repo. So it wrote, for every step:
+
+```bash
+cd /path/to/main-repo && PYTHONPATH=. python3 -m pytest harness/tests/test_x.py -q
+```
+
+A `cd` inside the command overrides the working directory the runner supplies. The `cd` wins,
+silently. Verify therefore ran against a checkout that did not contain the change, failed, and kept
+failing — three attempts, then the step was declared unverifiable and the run reported STUCK.
+
+Measured on the real plan file: **5 of 5 verify commands pointed at the main repo instead of the
+worktree they were verifying.**
+
+Two details make it worse, and both are about the loop's own structure rather than the shell:
+
+- The probe is instructed *"Do NOT amend the verify command even if it looks wrong — that judgement
+  belongs to the certifying verifier."* That instruction is right in general (a thermometer should not
+  doctor) but here it meant the component closest to the evidence was forbidden from acting on it.
+- The certifying verifiers **did** diagnose it, repeatedly, in their own words: *"a DISPOSABLE
+  amendment to the verify's `cd` target"*, *"PASSES in the correct worktree"*, *"genuinely met ON THE
+  CORRECT TARGET"*. The loop identified its own defect several times per run and had nowhere to put
+  the finding. It is not a knowledge problem; it is a plumbing problem.
+
+The shape of this defect is the reason it survived: a mis-scoped verify command does not error. It
+runs, exits non-zero, and produces a confident, specific, **wrong** FAIL — on work that is correct.
+
+### What changed
+
+- The planner prompt now states which directory verify runs in, and that an absolute `cd` will
+  silently test a different checkout.
+- A prompt is a request, so there is also enforcement: `harness/verify_scope.py` plus a `scopeVerify`
+  pass in the workflow that repoints working directories and absolute path arguments at the worktree
+  the moment the plan comes back, and **logs every correction** — a silently corrected plan reads
+  exactly like a correct plan, and then nobody fixes the prompt.
+- Every `STUCK` verdict now carries the command that settles what is on the branch, and says plainly
+  that STUCK means *could not certify*, not *produced nothing*. It also names `git diff` as the wrong
+  check, because that is the one we reached for.
+- `harness/arm_report.py` answers "what did this run actually produce" in one place, reporting
+  committed, uncommitted, both, or empty as four distinct states — the distinction the hand check
+  collapsed.
+
+Tests: `test_verify_scope_20260726.py` (32), `test_verify_scope_parity_20260726.py` (24, pinning the
+JS copy against the Python one because workflow scripts cannot call out to a subprocess),
+`test_arm_report_20260726.py` (12), `test_stuck_points_at_the_branch_20260726.py` (10). The scope
+guard was mutation-tested against nine deliberate breakages, two of which survived the first pass and
+exposed real gaps — including one where `check()` and `rewrite()` disagreed with each other about
+whether `cd /tmp/scratch` was a violation.
+
+---
+
 ## What we changed, and what we concluded
 
 We first assumed the problem was **spend**, and built four levers accordingly. They worked: agents
-54 → 40, output 342k → 237k, wall clock 79 → 52 min. The run still finished with **zero product-code
-changes.**
+54 → 40, output 342k → 237k, wall clock 79 → 52 min. The run still finished by **reporting nothing** —
+it hit the ceiling and the exception took the verdict with it. It had in fact committed the fix and a
+passing test to its branch; we did not find that out for hours, because we looked with `git diff`
+instead of `git diff main...HEAD`.
 
 - **A hard sub-agent ceiling.** There had been none of any kind; an earlier run reached 77 agents in
   1h42m.

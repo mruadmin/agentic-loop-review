@@ -55,14 +55,17 @@ const CONVERGE_TRIES = Number(A.converge_tries) || 3
 // result. What matters is that it cannot silently continue -- a loop that cannot stop is precisely
 // what produced the 52-minute three-line fix.
 //
-// CORRECTION 2026-07-26, same day, from run wf_a34c2778-e5d: the sentence that used to end this
-// comment -- "partial work survives in the branch and the evidence dir either way" -- was WRONG,
-// and it was the reason this was left as a bare throw. That run hit the ceiling at 48 agents after
-// 67.5 min and 2.53M tokens, and the worktree contained ZERO product-code changes: the finished
-// plan, five implementer attempts and 26 completed review agents all died with the exception,
-// because implementers write to the branch only once a step is certified and none ever were.
-// So the cap still stops the run -- that is the whole point of a ceiling -- but it now EMITS what
-// it learned on the way out. Cost of hitting the ceiling should be the remaining work, not all of it.
+// Why the degraded exit below exists (2026-07-26, run wf_a34c2778-e5d): that run hit the ceiling at
+// 48 agents after 67.5 min and 2.53M tokens, and the bare throw discarded the finished plan, the
+// step outcomes and 26 completed review agents along with it.
+//
+// Note carefully what was and was not lost, because the first version of this comment got it
+// backwards. The run HAD committed a working fix -- cb90f35, one line in harness/circuit_breaker.py
+// plus a passing test -- and the exception destroyed only the run's own account of itself, so we
+// read the arm as having produced nothing. (The original claim "zero product-code changes" came
+// from running `git diff`, working tree vs HEAD, which cannot show committed work; `git diff
+// main...HEAD` shows it immediately.) That makes the case for degrading STRONGER, not weaker: the
+// expensive thing a ceiling destroys is the knowledge of what already succeeded.
 let AGENT_CAP = Number(A.agent_cap) || 48
 let agentsUsed = 0
 class CapExceeded extends Error {}
@@ -176,7 +179,7 @@ function tightenCapForSmallPlan(stepCount) {
 // Pasted into every prompt. The lifecycle's standing rules live in SKILL.md;
 // this is only what an agent needs to orient before it opens that file.
 const CTX = `
-You are one stage of the the project L3 lifecycle. You are blind to memory and to CLAUDE.md.
+You are one stage of this project's L3 lifecycle. You are blind to memory and to CLAUDE.md.
 
 Read these before acting:
   - ${SKILL}            <- the lifecycle definition. Follow YOUR phase exactly.
@@ -377,9 +380,24 @@ Report the real command output for the branch creation.`,
     },
   })
 
-if (!setup) return { outcome: 'STUCK', reason: 'Phase 0 setup agent failed -- could not resolve the target repo or create the branch' }
+if (!setup) return { outcome: 'STUCK', note: 'Setup never completed, so there is no branch to inspect.', reason: 'Phase 0 setup agent failed -- could not resolve the target repo or create the branch' }
 const S = setup
 const EVIDENCE = S.state_dir
+
+// STUCK says the loop could not CERTIFY the work. It does NOT say the branch is empty, and on
+// 2026-07-26 conflating the two cost a full day and a published false claim: three arms reported
+// STUCK or blew their ceiling while their branches held a one-line fix and a passing test. The
+// verdict was believed and the branch was never opened.
+//
+// So every STUCK verdict now carries the command that settles it. `git diff` does NOT settle it --
+// that compares the working tree to HEAD and goes empty the moment an agent commits, which is
+// exactly what a working agent does.
+const BRANCH_NOTE = {
+  note: 'STUCK means this loop could not CERTIFY the work — NOT that the branch is empty. Check the ' +
+        'branch before concluding anything, and do not use `git diff`: it compares the working tree ' +
+        'to HEAD and is empty as soon as an agent commits.',
+  inspect_branch: `python3 -m harness.arm_report ${S.repo_path} --base main`,
+}
 log(`${S.slug}: ${S.repo_path} (${S.platform}) on ${S.branch}${S.is_ui ? ' [UI]' : ''}`)
 
 const parked = (gate, question) => ({
@@ -417,6 +435,7 @@ said and its exit code.`,
 if (preflight && preflight.ok === false) {
   log(`PREFLIGHT FAILED — not dispatching. ${preflight.reason}`)
   return {
+    ...BRANCH_NOTE,
     outcome: 'STUCK', slug: S.slug, branch: S.branch, evidence_path: EVIDENCE,
     reason: 'spec preflight failed: a factual claim in the spec is false against the current ' +
             'tree. Fix the spec, not the loop.\n' + (preflight.reason || ''),
@@ -514,6 +533,19 @@ Each step needs an id, desc, done_definition, and a concrete 'verify' shell comm
 ONLY if the step is truly done. Right-size them -- do NOT over-decompose; split only where
 verification needs it.
 
+WHERE VERIFY RUNS (2026-07-26 -- this made three runs report STUCK on working code):
+Every verify command is executed with its working directory ALREADY SET to the worktree
+
+  ${S.repo_path}
+
+which is NOT the main repo. Write verify commands RELATIVE to that -- `PYTHONPATH=. python3 -m
+pytest harness/tests/test_x.py -q`, not `cd /some/absolute/path && ...`.
+
+Do NOT put an absolute `cd` in a verify command. A `cd` overrides the working directory you were
+given, so it silently runs the test against a DIFFERENT checkout -- one that does not contain the
+change being verified. It then fails, on work that is correct, three times, and the step is declared
+unverifiable. Absolute paths under /tmp for evidence files (`| tee /tmp/x.out`) are fine.
+
 Mark each verify DURABLE or DISPOSABLE (see Phase 3c in the skill): DURABLE = user-facing behaviour
 or a hard constraint. DISPOSABLE = an implementation choice a builder may legitimately improve on.
 Default to DISPOSABLE for anything naming a specific library, file path, or helper.
@@ -522,7 +554,67 @@ Write the checklist to ${S.state_dir}/plan.md as well as returning it.`,
   { label: 'planner', phase: 'Plan', agentType: 'planner', schema: STEPS_SCHEMA, effort: 'high' })
 
 if (!plan || !plan.steps || !plan.steps.length) {
-  return { outcome: 'STUCK', slug: S.slug, evidence_path: EVIDENCE, reason: 'planner produced no steps' }
+  return { ...BRANCH_NOTE, outcome: 'STUCK', slug: S.slug, evidence_path: EVIDENCE, reason: 'planner produced no steps' }
+}
+
+// VERIFY SCOPING (2026-07-26). Measured: 5 of 5 verify commands in the plan for the circuit-breaker
+// spec began `cd /home/.../statement-zen-recurive-resolver && ...` -- the MAIN repo, not the
+// worktree the implementer had just committed to. A `cd` overrides the cwd the probe supplies, so
+// verify ran against a checkout without the change, failed three times, and the run reported STUCK
+// while the branch held a passing fix. Three separate arms died this way on the same day.
+//
+// The planner prompt above now states where verify runs, but a prompt is a request. This is the
+// enforcement. It is narrow ON PURPOSE -- it repoints working directories and absolute path
+// arguments and touches nothing else, because a rewrite that "improved" the test selection or flags
+// would change what is being verified.
+//
+// The full checker with the remaining edge cases (pushd, `git -C`, sibling worktrees whose paths are
+// string prefixes of each other, /tmp allowed as data but never as a working directory, remote
+// execution) is harness/verify_scope.py. Parity between the two is pinned by
+// harness/tests/test_verify_scope_parity_20260726.py: change the rules there and that test will tell
+// you this copy has drifted.
+function scopeVerify(cmd, repo) {
+  if (!cmd) return cmd
+  // A path used as DATA may sit outside the worktree (`| tee /tmp/out` is normal in the real plans).
+  // A path used as a WORKING DIRECTORY may not: writing to /tmp is fine, running the verification in
+  // /tmp verifies a tree that is not this branch.
+  const dataOk = p => /^\/(tmp|dev|proc|var\/tmp|usr|bin)\//.test(p)
+  const inside = p => p === repo || p.startsWith(repo + '/')
+  const remap = p => {
+    if (inside(p)) return p
+    const parent = repo.slice(0, repo.lastIndexOf('/'))
+    // A sibling checkout of the same project: keep the tail after that checkout's own directory.
+    if (p.startsWith(parent + '/')) {
+      const rest = p.slice(parent.length + 1).split('/').slice(1)
+      return rest.length ? repo + '/' + rest.join('/') : repo
+    }
+    return repo
+  }
+  let out = cmd
+  out = out.replace(/((?:^|[;&|\n(])\s*(?:cd|pushd)\s+)(\/[^\s"';&|)]+)/g,
+                    (_m, pre, p) => pre + remap(p))
+  out = out.replace(/(\bgit\s+(?:[^\s;&|]+\s+)*?-C\s+)(\/[^\s"';&|)]+)/g,
+                    (_m, pre, p) => pre + remap(p))
+  out = out.replace(/(^|[^\w=:\/-])(\/[\w.\/+-]{4,})/g,
+                    (m, pre, p) => (dataOk(p) || inside(p)) ? m : pre + remap(p))
+  return out
+}
+
+const verifyFixes = []
+for (const st of plan.steps) {
+  const scoped = scopeVerify(st.verify, S.repo_path)
+  if (scoped !== st.verify) {
+    verifyFixes.push({ id: st.id, before: st.verify, after: scoped })
+    st.verify = scoped
+  }
+}
+if (verifyFixes.length) {
+  // Logged, never silent. A silently corrected plan reads exactly like a plan that was written
+  // correctly, and then nobody fixes the prompt that keeps getting it wrong.
+  log(`verify scoping: repointed ${verifyFixes.length}/${plan.steps.length} verify command(s) at the ` +
+      `worktree ${S.repo_path}\n` +
+      verifyFixes.map(f => `  ${f.id}\n    was: ${f.before}\n    now: ${f.after}`).join('\n'))
+  PROGRESS.findings.push({ kind: 'verify_scope_corrected', steps: verifyFixes.map(f => f.id) })
 }
 
 // PLAN REVIEW GATE. One bad line of plan becomes hundreds of bad lines of code.
@@ -839,6 +931,7 @@ Write ${S.state_dir}/steps/${step.id}.json with the REAL command output either w
   PROGRESS.steps_done.push(`${step.id} ${done ? 'DONE' : 'NOT-DONE'} after ${attempts} attempt(s)`)
   if (!done) {
     return {
+      ...BRANCH_NOTE,
       outcome: 'STUCK', slug: S.slug, branch: S.branch, evidence_path: EVIDENCE,
       reason: `step ${step.id} (${step.desc}) failed a DURABLE verify ${MAX_ATTEMPTS} times`,
       steps: stepResults,
@@ -958,7 +1051,7 @@ Open the PR with the artifacts linked. Return the PR number and URL.`,
   })
 
 if (!pr || !pr.ok) {
-  return { outcome: 'STUCK', slug: S.slug, branch: S.branch, evidence_path: EVIDENCE, reason: 'could not open the PR/MR' }
+  return { ...BRANCH_NOTE, outcome: 'STUCK', slug: S.slug, branch: S.branch, evidence_path: EVIDENCE, reason: 'could not open the PR/MR' }
 }
 
 // --- Phase 7: Greptile loop -------------------------------------------------

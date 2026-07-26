@@ -22,12 +22,29 @@ what is still open. Everything below is the supporting material.
 One trivial bug: a Python CLI that raised `ImportError` when run as a script. Three-line fix. Four
 configurations, same spec, same model (Opus), each in its own git worktree.
 
-| Arm | Sub-agents | Output tokens | Wall clock | Outcome |
-|---|---|---|---|---|
-| L3 `lifecycle-run`, baseline | 54 | 342k | 79.3 min | **STUCK** |
-| L3 `lifecycle-fix`, small-bug variant | 10 | 83k | 46.8 min | **STUCK** |
-| L3 + caps, watchdog, cheap-probe, preflight | 48 | 237k | 67.5 min | **ceiling hit, zero product code** |
-| **One agent, told to choose its own process** | **1** | **8k** | **20 min** | **working fix** |
+| Arm | Agents | Output | Wall clock | Fix produced? | What the loop *reported* |
+|---|---|---|---|---|---|
+| L3 `lifecycle-run` | 54 | 342k | 79.3 min | **yes — committed, test passes** | STUCK |
+| L3 `lifecycle-fix` | 10 | 83k | 46.8 min | yes, but **never committed** (and it edited a file the spec forbade) | STUCK |
+| L3 + caps/watchdog/probe/preflight | 48 | 237k | 67.5 min | **yes — committed, test passes** | ceiling hit, no verdict |
+| **One agent, chose its own process** | **1** | **8k** | **20 min** | **yes — committed, test passes** | **success, accurately** |
+
+**All three loop arms solved the bug. None of them could tell us they had.** That is the finding, and
+it is not the one we first reported — an earlier draft of this page said the levered run changed zero
+product code, which was wrong: it was read off `git diff` (working tree vs HEAD), which by
+construction cannot show committed work. Corrected here, and in the write-up.
+
+So the failure is in **recognising and reporting** completion, not in producing it. Efficiency is
+still the story — 48 agents and 68 minutes versus 1 agent and 20 minutes for the same one-line
+change — but "the loop cannot fix a three-line bug" was false.
+
+**The root cause turned out to be one line of shell per step.** The planner was never told which
+directory verify runs in, so it wrote `cd <main repo> && pytest ...` — and a `cd` overrides the
+working directory the runner supplies. Verify tested a checkout that did not contain the change, on
+all 5 of 5 steps, and produced a confident wrong FAIL on correct work. The loop's own verifiers
+diagnosed this repeatedly and had nowhere to put the finding. Full account in the write-up under
+*"The root cause, found after publishing"*; guards in `harness/verify_scope.py` and
+`harness/arm_report.py`.
 
 Role split in the 48-agent run: **26 review, 14 plan, 5 implement, 2 verify, 1 preflight** — 83%
 deliberating, 10% building.

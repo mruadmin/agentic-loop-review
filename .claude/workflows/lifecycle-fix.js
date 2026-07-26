@@ -57,7 +57,7 @@ const MAX_ATTEMPTS = 3
 //
 // Agent COUNT, not wall-clock: Date.now() is unavailable inside a workflow script (it would break
 // resume), and agent count is what tracks spend. On breach spawn() THROWS and the run aborts, with
-// the message surfacing in the tool result. Partial work survives in the branch.
+// the message surfacing in the tool result -- but see the note below on what a throw destroys.
 let AGENT_CAP = Number(A.agent_cap) || 20
 let agentsUsed = 0
 class CapExceeded extends Error {}
@@ -68,9 +68,11 @@ class CapExceeded extends Error {}
 // out of the temporal dead zone and the degraded exit becomes a second, more confusing crash.
 //
 // Why this exists at all (2026-07-26, run wf_a34c2778-e5d on the sibling script): the cap fired
-// after 67.5 min / 2.53M tokens and the exception discarded EVERYTHING -- plan, five implementer
-// attempts, 26 completed review agents -- leaving zero product-code changes in the worktree. A
-// ceiling should cost the remaining work, not the work already done.
+// after 67.5 min / 2.53M tokens and the exception discarded the plan, the step outcomes and 26
+// completed review agents. The code survived on the branch -- that run had already committed a
+// working fix and a passing test -- so what the ceiling actually destroyed was the run's account of
+// its own success, and we read the arm as a failure for hours. A ceiling should cost the remaining
+// work, not the knowledge of the work already done.
 const PROGRESS = { phase: 'init', plan_steps: null, steps_done: [], findings: [] }
 
 const _phase = phase
@@ -150,7 +152,7 @@ async function spawn(prompt, opts) {
 }
 
 const CTX = `
-You are one stage of the the project BUG-FIX loop (the small L3 loop). You are blind to memory and
+You are one stage of this project's BUG-FIX loop (the small L3 loop). You are blind to memory and
 to CLAUDE.md.
 
 Read these before acting:
@@ -307,8 +309,23 @@ Report the real command output for the branch creation.`,
     },
   })
 
-if (!S) return { outcome: 'STUCK', reason: 'setup failed — could not resolve the repo or branch' }
+if (!S) return { outcome: 'STUCK', note: 'Setup never completed, so there is no branch to inspect.', reason: 'setup failed — could not resolve the repo or branch' }
 log(`${S.slug}: ${S.repo_path} (${S.platform}) on ${S.branch}${S.extra_gate ? ' [gate: ' + S.extra_gate + ']' : ''}`)
+
+// STUCK says the loop could not CERTIFY the work. It does NOT say the branch is empty, and on
+// 2026-07-26 conflating the two cost a full day and a published false claim: three arms reported
+// STUCK or blew their ceiling while their branches held a one-line fix and a passing test. The
+// verdict was believed and the branch was never opened.
+//
+// So every STUCK verdict now carries the command that settles it. `git diff` does NOT settle it --
+// that compares the working tree to HEAD and goes empty the moment an agent commits, which is
+// exactly what a working agent does.
+const BRANCH_NOTE = {
+  note: 'STUCK means this loop could not CERTIFY the work — NOT that the branch is empty. Check the ' +
+        'branch before concluding anything, and do not use `git diff`: it compares the working tree ' +
+        'to HEAD and is empty as soon as an agent commits.',
+  inspect_branch: `python3 -m harness.arm_report ${S.repo_path} --base main`,
+}
 
 const parked = (gate, question) => ({
   outcome: 'PARKED', slug: S.slug, branch: S.branch, evidence_path: S.state_dir, gate, question,
@@ -337,6 +354,7 @@ Do not fix the spec. Report exactly what the tool said and its exit code.`,
 if (preflight && preflight.ok === false) {
   log(`PREFLIGHT FAILED — not dispatching. ${preflight.reason}`)
   return {
+    ...BRANCH_NOTE,
     outcome: 'STUCK', slug: S.slug, branch: S.branch, evidence_path: S.state_dir,
     reason: 'spec preflight failed: a factual claim in the spec is false against the current ' +
             'tree. Fix the spec, not the loop.\n' + (preflight.reason || ''),
@@ -372,7 +390,7 @@ report any SIBLING code with the same latent defect (the spec may name some; fin
 ])
 
 const [repro, priorArt] = diagnosis
-if (!repro) return { outcome: 'STUCK', slug: S.slug, evidence_path: S.state_dir, reason: 'could not reproduce the bug — cannot fix what will not fail' }
+if (!repro) return { ...BRANCH_NOTE, outcome: 'STUCK', slug: S.slug, evidence_path: S.state_dir, reason: 'could not reproduce the bug — cannot fix what will not fail' }
 
 // --- Fix + Verify -----------------------------------------------------------
 // One unit of work, retried up to 3x against an independent verifier. No plan
@@ -466,6 +484,7 @@ Write ${S.state_dir}/steps/fix.json with the real command output either way.`,
 
 if (!done) {
   return {
+    ...BRANCH_NOTE,
     outcome: 'STUCK', slug: S.slug, branch: S.branch, evidence_path: S.state_dir,
     reason: `fix failed verification ${MAX_ATTEMPTS} times: ${lastReason}`,
   }
@@ -631,7 +650,7 @@ Link ${S.state_dir}/steps/fix.json.`,
     },
   })
 
-if (!pr || !pr.ok) return { outcome: 'STUCK', slug: S.slug, branch: S.branch, evidence_path: S.state_dir, reason: 'could not open the PR/MR' }
+if (!pr || !pr.ok) return { ...BRANCH_NOTE, outcome: 'STUCK', slug: S.slug, branch: S.branch, evidence_path: S.state_dir, reason: 'could not open the PR/MR' }
 
 // --- Greptile ---------------------------------------------------------------
 // Kept verbatim in spirit from lifecycle-run Phase 7: this is the merge gate,

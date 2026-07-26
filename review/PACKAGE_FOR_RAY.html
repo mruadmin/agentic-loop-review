@@ -277,15 +277,37 @@ flowchart LR
 <div class="tw">
 <table>
   <thead>
-    <tr><th>Arm</th><th>Sub-agents</th><th>Output tokens</th><th>Wall clock</th><th>Outcome</th></tr>
+    <tr><th>Arm</th><th>Agents</th><th>Output</th><th>Wall clock</th><th>Fix produced?</th><th>What the loop <em>reported</em></th></tr>
   </thead>
   <tbody>
-    <tr><td>L3 <code>lifecycle-run</code>, baseline</td><td class="num">54</td><td class="num">342k</td><td class="num">79.3 min</td><td class="f">STUCK</td></tr>
-    <tr><td>L3 <code>lifecycle-fix</code>, small-bug variant</td><td class="num">10</td><td class="num">83k</td><td class="num">46.8 min</td><td class="f">STUCK</td></tr>
-    <tr><td>L3 + caps, watchdog, cheap-probe, preflight</td><td class="num">48</td><td class="num">237k</td><td class="num">67.5 min</td><td class="f">ceiling hit — zero product code</td></tr>
-    <tr class="win"><td>One agent, told to choose its own process</td><td class="num">1</td><td class="num">8k</td><td class="num">20 min</td><td class="p">working fix</td></tr>
+    <tr><td>L3 <code>lifecycle-run</code>, baseline</td><td class="num">54</td><td class="num">342k</td><td class="num">79.3 min</td><td class="p">yes — committed, test passes</td><td class="f">STUCK</td></tr>
+    <tr><td>L3 <code>lifecycle-fix</code>, small-bug variant</td><td class="num">10</td><td class="num">83k</td><td class="num">46.8 min</td><td class="p">yes, but never committed — and it edited a file the spec forbade</td><td class="f">STUCK</td></tr>
+    <tr><td>L3 + caps, watchdog, cheap-probe, preflight</td><td class="num">48</td><td class="num">237k</td><td class="num">67.5 min</td><td class="p">yes — committed, test passes</td><td class="f">ceiling hit, no verdict</td></tr>
+    <tr class="win"><td>One agent, told to choose its own process</td><td class="num">1</td><td class="num">8k</td><td class="num">20 min</td><td class="p">yes — committed, test passes</td><td class="p">success, accurately</td></tr>
   </tbody>
 </table>
+</div>
+
+<div class="note col">
+  <span class="lab">Correction — 2026-07-26, after publication</span>
+  <strong>This changes the finding.</strong> An earlier version of this page said the
+  loop arms produced no working code. That was wrong. We checked each worktree with
+  <code>git diff</code> — working tree against HEAD — which by construction cannot show work that was
+  <em>committed</em>. Checked properly against the base branch, three of the four arms had a one-line
+  fix and a passing test sitting on a branch.
+  <p>
+    <strong>All three loop arms solved the bug. None of them could tell us they had.</strong> The
+    54-agent run committed a working fix and reported STUCK. The 48-agent run committed a working fix,
+    then blew its agent ceiling during the <em>review</em> fan-out and threw the verdict away with the
+    exception. The 10-agent run fixed it in the working tree, never committed, and also modified a file
+    the spec named as off-limits.
+  </p>
+  <p>
+    So the defect is in <strong>recognising and reporting completion</strong>, not in producing it —
+    a different and more interesting problem than the one we set out to ask about. The efficiency gap
+    is unchanged and still stark: 48 agents and 68 minutes against 1 agent and 20 minutes, same
+    one-line change. And the single agent was the only one whose report matched reality.
+  </p>
 </div>
 
 <h3>Where the 48 agents went</h3>
@@ -354,8 +376,10 @@ flowchart LR
 
 <p class="col">
   We first assumed the problem was <em>spend</em>, and built four levers accordingly. They worked:
-  agents 54 → 40, output 342k → 237k, wall clock 79 → 52 min. The run still finished with
-  <strong>zero product-code changes</strong>.
+  agents 54 → 40, output 342k → 237k, wall clock 79 → 52 min. The run still finished by
+  <strong>reporting nothing</strong> — it hit the ceiling and the exception took the verdict with it.
+  It had in fact committed the fix and a passing test to its branch; we did not find that out for
+  hours, because we looked with <code>git diff</code> instead of <code>git diff main...HEAD</code>.
 </p>
 
 <ul class="col">
